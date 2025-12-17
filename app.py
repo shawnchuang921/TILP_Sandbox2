@@ -1,3 +1,4 @@
+# app.py
 import streamlit as st
 # FIXED: Database functions are now imported from the new location (views.database)
 from views.database import init_db, get_user
@@ -24,10 +25,12 @@ def login_screen():
             
             if user_data:
                 st.session_state["logged_in"] = True
-                st.session_state["user_role"] = user_data["role"]
+                # FIX 1: Change "user_role" key to "role" for consistency with tracker.py
+                st.session_state["role"] = user_data["role"] 
                 st.session_state["username"] = user_data["username"]
                 # Store the child link for parent filtering
                 st.session_state["child_link"] = user_data["child_link"]
+                st.success(f"Welcome, {user_data['username']} ({user_data['role']})!")
                 st.rerun()
             else:
                 st.error("Incorrect username or password")
@@ -42,7 +45,8 @@ def main():
         return
 
     # --- SIDEBAR NAVIGATION ---
-    user_role = st.session_state["user_role"]
+    # FIX 2: Retrieve role using the corrected key "role"
+    user_role = st.session_state["role"] 
     username = st.session_state["username"]
     st.sidebar.title(f"👤 User: {username.capitalize()}")
     st.sidebar.markdown(f"**Role:** {user_role.upper()}")
