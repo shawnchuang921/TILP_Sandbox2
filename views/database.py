@@ -23,7 +23,7 @@ ENGINE = get_engine()
 def init_db():
     if not ENGINE: return
     with ENGINE.connect() as conn:
-        # --- EXISTING TABLES (DO NOT TOUCH) ---
+        # Existing Tables
         conn.execute(text('''CREATE TABLE IF NOT EXISTS progress (
             id SERIAL PRIMARY KEY, date TEXT, child_name TEXT, discipline TEXT, 
             goal_area TEXT, status TEXT, notes TEXT, media_path TEXT, author TEXT)'''))
@@ -42,7 +42,7 @@ def init_db():
         conn.execute(text("CREATE TABLE IF NOT EXISTS disciplines (name TEXT UNIQUE)"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS goal_areas (name TEXT UNIQUE)"))
         
-        # --- NEW TABLES FOR BILLING & SCHEDULE ---
+        # New Tables
         conn.execute(text('''CREATE TABLE IF NOT EXISTS invoices (
             id SERIAL PRIMARY KEY, date TEXT, child_name TEXT, 
             item_desc TEXT, amount REAL, status TEXT, note TEXT)'''))
@@ -221,7 +221,7 @@ def delete_list_item(table, item):
         conn.execute(text(f"DELETE FROM {table} WHERE name = :n"), {"n": item})
         conn.commit()
 
-# --- NEW FUNCTIONS: BILLING & SCHEDULE ---
+# --- BILLING & SCHEDULE FUNCTIONS ---
 
 def create_invoice(date, child, item, amount, status, note):
     if not ENGINE: return
@@ -244,6 +244,19 @@ def get_invoices(child_name=None):
     with ENGINE.connect() as conn:
         return pd.read_sql_query(text(query), conn, params=params)
 
+def update_invoice_status(inv_id, new_status):
+    if not ENGINE: return
+    sql = text("UPDATE invoices SET status = :s WHERE id = :id")
+    with ENGINE.connect() as conn:
+        conn.execute(sql, {"s": new_status, "id": inv_id})
+        conn.commit()
+
+def delete_invoice(inv_id):
+    if not ENGINE: return
+    with ENGINE.connect() as conn:
+        conn.execute(text("DELETE FROM invoices WHERE id = :id"), {"id": inv_id})
+        conn.commit()
+
 def create_appointment(date, time, child, discipline, staff, cost, status):
     if not ENGINE: return
     sql = text("""
@@ -264,3 +277,16 @@ def get_appointments(child_name=None):
     query += " ORDER BY date DESC, time ASC"
     with ENGINE.connect() as conn:
         return pd.read_sql_query(text(query), conn, params=params)
+
+def update_appointment(appt_id, date, time, status):
+    if not ENGINE: return
+    sql = text("UPDATE appointments SET date=:d, time=:t, status=:s WHERE id=:id")
+    with ENGINE.connect() as conn:
+        conn.execute(sql, {"d": date, "t": time, "s": status, "id": appt_id})
+        conn.commit()
+
+def delete_appointment(appt_id):
+    if not ENGINE: return
+    with ENGINE.connect() as conn:
+        conn.execute(text("DELETE FROM appointments WHERE id = :id"), {"id": appt_id})
+        conn.commit()
