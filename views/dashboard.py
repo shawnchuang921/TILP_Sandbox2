@@ -23,28 +23,25 @@ def show_page():
     df_plans = get_data("session_plans")
     
     if not df_plans.empty:
-        # Filter UI
         col_s1, col_s2 = st.columns(2)
         plan_start = col_s1.date_input("Plans From", date.today() - timedelta(days=7))
         plan_end = col_s2.date_input("Plans To", date.today() + timedelta(days=7))
         
-        # Data Processing
         df_plans['date'] = pd.to_datetime(df_plans['date']).dt.date
         mask = (df_plans['date'] >= plan_start) & (df_plans['date'] <= plan_end)
         filtered_plans = df_plans.loc[mask].sort_values('date', ascending=False)
         
         if not filtered_plans.empty:
-            # Quick Download for the filtered range
             csv_range = filtered_plans.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Download Filtered Plans (CSV)",
                 data=csv_range,
                 file_name=f"Plans_{plan_start}_to_{plan_end}.csv",
                 mime="text/csv",
+                key="download_plans_btn"
             )
 
             for _, plan in filtered_plans.iterrows():
-                # Highlight today's plan specifically
                 is_today = plan['date'] == date.today()
                 label = f"🗓️ {plan['date']} - Lead: {plan['lead_staff']} {'(TODAY)' if is_today else ''}"
                 
@@ -52,7 +49,6 @@ def show_page():
                     c1, c2 = st.columns(2)
                     c1.write(f"**Lead:** {plan['lead_staff']}")
                     c2.write(f"**Support:** {plan['support_staff']}")
-                    
                     st.write(f"**Warm Up:** {plan['warm_up']}")
                     st.write(f"**Learning Block:** {plan['learning_block']}")
                     st.write(f"**Regulation Break:** {plan['regulation_break']}")
@@ -63,8 +59,6 @@ def show_page():
                         st.warning(f"**Internal Notes:** {plan['internal_notes']}")
         else:
             st.info("No session plans found for this date range.")
-    else:
-        st.info("No session plans exist in the system yet.")
     
     st.divider()
 
@@ -96,7 +90,7 @@ def show_page():
     
     st.divider()
 
-    # --- SECTION C: CLINICAL PROGRESS NOTES ---
+    # --- SECTION C: CLINICAL PROGRESS NOTES & DOWNLOAD ---
     st.subheader("📝 Clinical Progress Notes")
     
     col_p1, col_p2 = st.columns(2)
@@ -108,11 +102,23 @@ def show_page():
         df_prog['date'] = pd.to_datetime(df_prog['date']).dt.date
         since_date = date.today() - timedelta(days=p_days)
         
+        # Filter Logic
         df_p_filt = df_prog[df_prog['date'] >= since_date]
         if p_search:
             df_p_filt = df_p_filt[df_p_filt['child_name'].str.contains(p_search, case=False)]
         
         if not df_p_filt.empty:
+            # NEW: Download Progress Notes Button
+            csv_prog = df_p_filt.sort_values('date', ascending=False).to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Progress Notes (CSV)",
+                data=csv_prog,
+                file_name=f"Progress_Notes_{date.today()}.csv",
+                mime="text/csv",
+                key="download_prog_btn"
+            )
+            
+            # Display Expandable Notes
             for _, row in df_p_filt.sort_values('date', ascending=False).iterrows():
                 with st.expander(f"{row['date']} - {row['child_name']} ({row['discipline']})"):
                     st.write(f"**Goal Area:** {row['goal_area']} | **Status:** {row['status']}")
