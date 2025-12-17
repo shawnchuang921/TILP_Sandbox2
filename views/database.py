@@ -1,4 +1,4 @@
-# views/database.py (FINAL VERSION - Including Attendance Table)
+# views/database.py (FINAL VERSION - Including all features and delete_attendance)
 import pandas as pd
 from datetime import datetime
 import streamlit as st 
@@ -95,7 +95,6 @@ def init_db():
 
 
         # Initial Data Load
-        # Only hardcode the admin user for initial access.
         conn.execute(text("INSERT INTO users (username, password, role, child_link) VALUES (:u, :p, :r, :c) ON CONFLICT (username) DO NOTHING"),
                      {"u": "adminuser", "p": "admin123", "r": "admin", "c": "All"})
         
@@ -318,7 +317,18 @@ def get_attendance_data(date=None, child_name=None):
     elif child_name:
         query += " WHERE child_name = :cn ORDER BY date DESC"
         params = {"cn": child_name}
+    else:
+        # No filters, order by date descending
+        query += " ORDER BY date DESC"
 
     with ENGINE.connect() as conn:
         df = pd.read_sql_query(text(query), conn, params=params)
     return df
+
+def delete_attendance(id):
+    """Deletes an attendance entry by ID."""
+    if not ENGINE: return
+    sql_stmt = text("DELETE FROM attendance WHERE id = :id")
+    with ENGINE.connect() as conn:
+        conn.execute(sql_stmt, {"id": id})
+        conn.commit()
