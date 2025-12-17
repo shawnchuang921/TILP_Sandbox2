@@ -1,9 +1,8 @@
-# views/database.py (FINAL VERSION - Including all features and delete_attendance)
+# views/database.py
 import pandas as pd
 from datetime import datetime
 import streamlit as st 
 from sqlalchemy import create_engine, text, inspect 
-import sqlite3 
 
 # --- CORE DB CONNECTION ---
 
@@ -83,7 +82,6 @@ def init_db():
             internal_notes TEXT
         )'''))
 
-        # --- NEW: ATTENDANCE TABLE ---
         conn.execute(text('''CREATE TABLE IF NOT EXISTS attendance (
             id SERIAL PRIMARY KEY,
             date TEXT,
@@ -93,22 +91,17 @@ def init_db():
             UNIQUE (date, child_name)
         )'''))
 
-
         # Initial Data Load
         conn.execute(text("INSERT INTO users (username, password, role, child_link) VALUES (:u, :p, :r, :c) ON CONFLICT (username) DO NOTHING"),
                      {"u": "adminuser", "p": "admin123", "r": "admin", "c": "All"})
         
-        # Add default disciplines/roles
         for d in ["OT", "SLP", "BC", "ECE", "Assistant"]:
             conn.execute(text("INSERT INTO disciplines (name) VALUES (:n) ON CONFLICT (name) DO NOTHING"), {"n": d})
             
-        # Add default goal areas
         for g in ["Regulation", "Communication", "Fine Motor", "Social Play"]:
             conn.execute(text("INSERT INTO goal_areas (name) VALUES (:n) ON CONFLICT (name) DO NOTHING"), {"n": g})
             
         conn.commit()
-
-# --- DML (Data Manipulation Language) ---
 
 # --- User & Login Functions ---
 
@@ -122,7 +115,6 @@ def get_user(username, password):
     return None
 
 def get_user_discipline(username):
-    """Retrieves the discipline (role) of the current user."""
     if not ENGINE: return None
     sql_query = text("SELECT role FROM users WHERE username = :user")
     with ENGINE.connect() as conn:
@@ -203,16 +195,12 @@ def delete_list_item(table_name, item_name):
 # --- Progress/Planner Functions ---
 
 def get_data(table_name):
-    """Retrieves all data from a table (Progress or Plans)."""
     if not ENGINE: return pd.DataFrame()
-    
-    # Simple retrieval for session_plans
     if table_name != "progress":
         with ENGINE.connect() as conn:
             df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
         return df
 
-    # Progress table: ensure 'author' column exists before reading
     try:
          with ENGINE.connect() as conn:
              inspector = inspect(ENGINE)
@@ -220,47 +208,32 @@ def get_data(table_name):
              if 'author' not in columns:
                   conn.execute(text("ALTER TABLE progress ADD COLUMN author TEXT"))
                   conn.commit()
-             
              df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
              return df
     except Exception as e:
-        # Fallback if connection or query fails
-        st.warning(f"Error accessing 'progress' table: {e}")
+        st.warning(f"Error accessing table: {e}")
         return pd.DataFrame()
 
-
 def save_progress(date, child, discipline, goal, status, notes, media_path, author):
-    """Saves a new progress entry, including the author."""
     if not ENGINE: return
     sql_stmt = text("""
         INSERT INTO progress (date, child_name, discipline, goal_area, status, notes, media_path, author) 
         VALUES (:d, :c, :dis, :g, :s, :n, :m, :a)
     """)
     with ENGINE.connect() as conn:
-        conn.execute(sql_stmt, {
-            "d": date, "c": child, "dis": discipline, "g": goal, 
-            "s": status, "n": notes, "m": media_path, "a": author
-        })
+        conn.execute(sql_stmt, {"d": date, "c": child, "dis": discipline, "g": goal, "s": status, "n": notes, "m": media_path, "a": author})
         conn.commit()
 
 def update_progress(id, date, child, discipline, goal, status, notes, media_path):
-    """Updates an existing progress entry. Author is not updated."""
     if not ENGINE: return
     sql_stmt = text("""
-        UPDATE progress 
-        SET date = :d, child_name = :c, discipline = :dis, goal_area = :g, 
-            status = :s, notes = :n, media_path = :m
-        WHERE id = :id
+        UPDATE progress SET date = :d, child_name = :c, discipline = :dis, goal_area = :g, status = :s, notes = :n, media_path = :m WHERE id = :id
     """)
     with ENGINE.connect() as conn:
-        conn.execute(sql_stmt, {
-            "id": id, "d": date, "c": child, "dis": discipline, 
-            "g": goal, "s": status, "n": notes, "m": media_path
-        })
+        conn.execute(sql_stmt, {"id": id, "d": date, "c": child, "dis": discipline, "g": goal, "s": status, "n": notes, "m": media_path})
         conn.commit()
 
 def delete_progress(id):
-    """Deletes a progress entry by ID."""
     if not ENGINE: return
     sql_stmt = text("DELETE FROM progress WHERE id = :id")
     with ENGINE.connect() as conn:
@@ -268,13 +241,19 @@ def delete_progress(id):
         conn.commit()
 
 def save_plan(date, lead_staff, support_staff, warm_up, learning_block, regulation_break, social_play, closing_routine, materials_needed, internal_notes):
-    """Saves a new daily session plan entry."""
+    """Saves a session plan, handling support_staff as either a list or string."""
     if not ENGINE: return
     sql_stmt = text("""
         INSERT INTO session_plans (date, lead_staff, support_staff, warm_up, learning_block, regulation_break, social_play, closing_routine, materials_needed, internal_notes) 
         VALUES (:d, :ls, :ss, :wu, :lb, :rb, :sp, :cr, :mn, :in)
     """)
-    support_staff_str = ", ".join(support_staff)
+    
+    # Handle list vs string safely
+    if isinstance(support_staff, list):
+        support_staff_str = ", ".join(support_staff)
+    else:
+        support_staff_str = str(support_staff)
+
     with ENGINE.connect() as conn:
         conn.execute(sql_stmt, {
             "d": date, "ls": lead_staff, "ss": support_staff_str, 
@@ -283,31 +262,24 @@ def save_plan(date, lead_staff, support_staff, warm_up, learning_block, regulati
         })
         conn.commit()
 
-# --- Attendance Functions (NEW) ---
+# --- Attendance Functions ---
 
 def upsert_attendance(date, child_name, status, logged_by):
-    """Inserts or updates a daily attendance record."""
     if not ENGINE: return
     sql_stmt = text("""
         INSERT INTO attendance (date, child_name, status, logged_by) 
         VALUES (:d, :cn, :s, :lb)
         ON CONFLICT (date, child_name) DO UPDATE 
-        SET status = EXCLUDED.status, 
-            logged_by = EXCLUDED.logged_by;
+        SET status = EXCLUDED.status, logged_by = EXCLUDED.logged_by;
     """)
     with ENGINE.connect() as conn:
-        conn.execute(sql_stmt, {
-            "d": date, "cn": child_name, "s": status, "lb": logged_by
-        })
+        conn.execute(sql_stmt, {"d": date, "cn": child_name, "s": status, "lb": logged_by})
         conn.commit()
 
 def get_attendance_data(date=None, child_name=None):
-    """Retrieves attendance data, filtered by date or child."""
     if not ENGINE: return pd.DataFrame()
-    
     query = "SELECT * FROM attendance"
     params = {}
-    
     if date and child_name:
         query += " WHERE date = :d AND child_name = :cn"
         params = {"d": date, "cn": child_name}
@@ -318,7 +290,6 @@ def get_attendance_data(date=None, child_name=None):
         query += " WHERE child_name = :cn ORDER BY date DESC"
         params = {"cn": child_name}
     else:
-        # No filters, order by date descending
         query += " ORDER BY date DESC"
 
     with ENGINE.connect() as conn:
@@ -326,7 +297,6 @@ def get_attendance_data(date=None, child_name=None):
     return df
 
 def delete_attendance(id):
-    """Deletes an attendance entry by ID."""
     if not ENGINE: return
     sql_stmt = text("DELETE FROM attendance WHERE id = :id")
     with ENGINE.connect() as conn:
