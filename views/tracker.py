@@ -1,4 +1,4 @@
-# views/tracker.py (COMPLETE REPLACEMENT)
+# views/tracker.py (COMPLETE REPLACEMENT - Final Discipline Fix)
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -37,28 +37,38 @@ def show_progress_input():
 
     child = st.selectbox("Child", child_options, index=child_index, placeholder="Select Child")
 
-    # Discipline Selection (Filtered by Role)
+    # --- Discipline Selection (Filtered by Role) ---
     user_role = st.session_state.get('role', '')
     discipline_df = db.get_list_data("disciplines")
     all_disciplines = discipline_df['name'].tolist() if not discipline_df.empty else []
 
-    # --- FIX APPLIED HERE: Guarantee single option for non-admin ---
+    # Initialize options and index
+    discipline_options = all_disciplines
+    disc_index = None
+
     if user_role == 'admin':
-        discipline_options = all_disciplines
-        disc_index = None
+        # Admin: see all and set index if editing
         if is_edit_mode and edit_data.get('discipline') in discipline_options:
             disc_index = discipline_options.index(edit_data.get('discipline'))
     else:
-        # If the user's role (e.g., 'OT') is a valid discipline, restrict the options to just that role.
+        # NON-ADMIN FIX: Force the selection to be the user's role/discipline
         if user_role in all_disciplines:
             discipline_options = [user_role]
             disc_index = 0
+            # If in edit mode, and the entry's discipline doesn't match the user's role,
+            # this will still select the user's discipline, ensuring the new entry is correct.
         else:
-            # Fallback (shouldn't happen if user roles match disciplines)
-            discipline_options = all_disciplines
-            disc_index = None
+            # Fallback for user roles that aren't defined as disciplines
+            st.warning(f"Your role '{user_role}' is not a valid discipline. Showing all.")
+
+
+    # Disable the select box if it's restricted to a single option
+    is_disabled = (len(discipline_options) == 1)
             
-    discipline = st.selectbox("Discipline", discipline_options, index=disc_index, placeholder="Select Discipline")
+    discipline = st.selectbox("Discipline", discipline_options, 
+                              index=disc_index, 
+                              placeholder="Select Discipline",
+                              disabled=is_disabled) # Disabled for non-admin
 
     # Goal Area
     goals_df = db.get_list_data("goal_areas")
@@ -229,18 +239,11 @@ def show_page():
     if not st.session_state.get('logged_in', False):
         st.error("Please log in to access the Progress Tracker.")
         return
-
-    # Check if a specific entry is being edited and handle the form display
-    if st.session_state.get('edit_id'):
-        # If an ID is set for editing, switch to edit mode
-        if not st.session_state.get('edit_mode', False):
-             # Fetch the data for the ID stored in session state
-             all_data = db.get_data("progress")
-             edit_row = all_data[all_data['id'] == st.session_state.edit_id].iloc[0]
-             st.session_state.edit_data = edit_row.to_dict()
-             st.session_state.edit_mode = True
-             del st.session_state.edit_id # Clear the flag after setting data
-             st.rerun() # Rerun to switch to edit mode
+        
+    # Check if we should exit edit mode after a successful update/cancel
+    if 'edit_mode' in st.session_state and not st.session_state.edit_mode:
+        if 'edit_data' in st.session_state:
+            del st.session_state.edit_data
         
     # If in edit mode, show only the input form at the top
     if st.session_state.get('edit_mode', False):
