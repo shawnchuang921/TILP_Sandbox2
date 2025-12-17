@@ -1,3 +1,4 @@
+# views/database.py
 import pandas as pd
 from datetime import datetime
 import streamlit as st 
@@ -22,26 +23,30 @@ ENGINE = get_engine()
 def init_db():
     if not ENGINE: return
     with ENGINE.connect() as conn:
+        # Progress Table
         conn.execute(text('''CREATE TABLE IF NOT EXISTS progress (
             id SERIAL PRIMARY KEY, date TEXT, child_name TEXT, discipline TEXT, 
             goal_area TEXT, status TEXT, notes TEXT, media_path TEXT, author TEXT)'''))
         
+        # Session Plans Table
         conn.execute(text('''CREATE TABLE IF NOT EXISTS session_plans (
             id SERIAL PRIMARY KEY, date TEXT, lead_staff TEXT, support_staff TEXT, 
             warm_up TEXT, learning_block TEXT, regulation_break TEXT, social_play TEXT, 
             closing_routine TEXT, materials_needed TEXT, internal_notes TEXT, author TEXT)'''))
 
+        # Attendance Table
         conn.execute(text('''CREATE TABLE IF NOT EXISTS attendance (
             id SERIAL PRIMARY KEY, date TEXT, child_name TEXT, status TEXT, 
             logged_by TEXT, UNIQUE (date, child_name))'''))
         
+        # Core Tables
         conn.execute(text("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT, child_link TEXT)"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS children (id SERIAL PRIMARY KEY, child_name TEXT UNIQUE, parent_username TEXT, date_of_birth TEXT)"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS disciplines (name TEXT UNIQUE)"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS goal_areas (name TEXT UNIQUE)"))
         conn.commit()
 
-# --- AUTHENTICATION (Required by app.py) ---
+# --- AUTHENTICATION & USERS ---
 
 def get_user(username, password):
     if not ENGINE: return None
@@ -92,7 +97,42 @@ def get_list_data(table):
     with ENGINE.connect() as conn:
         return pd.read_sql_query(f"SELECT * FROM {table}", conn)
 
-# --- PLANNER CRUD ---
+# --- ATTENDANCE (Fixes dashboard.py error) ---
+
+def upsert_attendance(date, child_name, status, logged_by):
+    if not ENGINE: return
+    sql = text("""
+        INSERT INTO attendance (date, child_name, status, logged_by) 
+        VALUES (:d, :cn, :s, :lb)
+        ON CONFLICT (date, child_name) DO UPDATE 
+        SET status = EXCLUDED.status, logged_by = EXCLUDED.logged_by
+    """)
+    with ENGINE.connect() as conn:
+        conn.execute(sql, {"d": date, "cn": child_name, "s": status, "lb": logged_by})
+        conn.commit()
+
+def get_attendance_data(date=None, child_name=None):
+    if not ENGINE: return pd.DataFrame()
+    query = "SELECT * FROM attendance"
+    params = {}
+    if date:
+        query += " WHERE date = :d"
+        params["d"] = date
+    elif child_name:
+        query += " WHERE child_name = :cn ORDER BY date DESC"
+        params["cn"] = child_name
+    else:
+        query += " ORDER BY date DESC"
+    with ENGINE.connect() as conn:
+        return pd.read_sql_query(text(query), conn, params=params)
+
+def delete_attendance(att_id):
+    if not ENGINE: return
+    with ENGINE.connect() as conn:
+        conn.execute(text("DELETE FROM attendance WHERE id = :id"), {"id": att_id})
+        conn.commit()
+
+# --- SESSION PLANS ---
 
 def save_plan(date, lead, support, wu, lb, rb, sp, cr, mn, notes, author):
     if not ENGINE: return
