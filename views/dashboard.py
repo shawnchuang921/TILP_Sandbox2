@@ -1,7 +1,7 @@
-# views/dashboard.py (COMPLETE REPLACEMENT - Introducing ECE Attendance)
+# views/dashboard.py (FINAL VERSION - Flexible ECE Attendance & Filtering)
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from .database import get_list_data, get_data, upsert_attendance, get_attendance_data
 
 def show_ece_attendance_dashboard():
@@ -9,9 +9,14 @@ def show_ece_attendance_dashboard():
     st.title("📊 ECE Attendance Tracker")
     st.markdown("---")
 
-    current_date = st.date_input("Select Date for Attendance", value=datetime.now().date())
-    current_date_str = current_date.strftime('%Y-%m-%d')
     logged_by = st.session_state.get('username', 'Unknown')
+    
+    # --- 1. ATTENDANCE LOGGING FORM ---
+    st.subheader("Daily Attendance Logging")
+
+    # Change 1: Allow ECE to select ANY date (no default value)
+    current_date = st.date_input("Select Date for Attendance")
+    current_date_str = current_date.strftime('%Y-%m-%d') if current_date else datetime.now().strftime('%Y-%m-%d')
 
     # Get all children
     children_df = get_list_data("children")
@@ -24,15 +29,16 @@ def show_ece_attendance_dashboard():
     # Get existing attendance for the selected date
     existing_attendance = get_attendance_data(date=current_date_str)
     
-    st.subheader(f"Attendance for {current_date_str}")
+    st.caption(f"Review/Set status for **{current_date_str}**")
 
     with st.form("attendance_form"):
         attendance_options = ["Present", "Absent", "Late", "Cancelled"]
         
-        # Display each child with their current status
         attendance_records = {}
+        
+        # Display each child with their current status
         for child_name in children_list:
-            default_status = "Absent" # Default status if no record exists
+            default_status = "Absent" 
             if not existing_attendance.empty:
                 current_record = existing_attendance[existing_attendance['child_name'] == child_name]
                 if not current_record.empty:
@@ -43,7 +49,7 @@ def show_ece_attendance_dashboard():
                 f"Status for **{child_name}**",
                 attendance_options,
                 index=attendance_options.index(default_status),
-                key=f"status_{child_name}"
+                key=f"status_{child_name}_{current_date_str}" # Key updated to prevent conflict across dates
             )
 
         st.markdown("---")
@@ -53,6 +59,52 @@ def show_ece_attendance_dashboard():
                     upsert_attendance(current_date_str, child, status, logged_by)
             st.success(f"Attendance for {current_date_str} saved by {logged_by}.")
             st.rerun()
+
+    st.markdown("---")
+
+    # --- 2. HISTORICAL ATTENDANCE FILTER ---
+    st.subheader("Attendance Overview")
+    
+    # Set default date range for filter (e.g., last 7 days)
+    default_end = datetime.now().date()
+    default_start = default_end - timedelta(days=7)
+    
+    col_start, col_end = st.columns(2)
+    start_date = col_start.date_input("Start Date", value=default_start)
+    end_date = col_end.date_input("End Date", value=default_end)
+    
+    if start_date > end_date:
+        st.error("Error: Start Date must be before or the same as the End Date.")
+        return
+
+    # Fetch all data within the date range
+    all_attendance_df = get_attendance_data() 
+    
+    if all_attendance_df.empty:
+        st.info("No historical attendance data found.")
+        return
+
+    # Convert date column to datetime for filtering
+    all_attendance_df['date'] = pd.to_datetime(all_attendance_df['date'])
+    
+    # Filter by selected date range
+    filtered_df = all_attendance_df[
+        (all_attendance_df['date'].dt.date >= start_date) & 
+        (all_attendance_df['date'].dt.date <= end_date)
+    ].sort_values(by=['date', 'child_name'], ascending=[False, True])
+    
+    
+    if filtered_df.empty:
+        st.info(f"No attendance records found between {start_date} and {end_date}.")
+    else:
+        # Format the date back to string for cleaner display
+        filtered_df['date'] = filtered_df['date'].dt.strftime('%Y-%m-%d')
+        
+        # Select and rename columns for display
+        display_df = filtered_df[['date', 'child_name', 'status', 'logged_by']]
+        display_df.columns = ["Date", "Child Name", "Status", "Logged By"]
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+
 
 def show_parent_dashboard(child_name_link):
     """Dashboard view for a Parent role."""
@@ -76,8 +128,54 @@ def show_parent_dashboard(child_name_link):
         st.info(f"No attendance records found for {child_name_link}.")
 
     st.markdown("---")
+
+    # 2. Parent Historical Attendance Filter
+    st.header("Attendance History")
     
-    # 2. Display Latest Progress Notes (Example - keep this section simple for now)
+    # Set default date range for filter (e.g., last 30 days)
+    default_end = datetime.now().date()
+    default_start = default_end - timedelta(days=30)
+    
+    col_start, col_end = st.columns(2)
+    p_start_date = col_start.date_input("Start Date", value=default_start, key="p_start_date")
+    p_end_date = col_end.date_input("End Date", value=default_end, key="p_end_date")
+    
+    if p_start_date > p_end_date:
+        st.error("Error: Start Date must be before or the same as the End Date.")
+        return
+
+    # Fetch data only for the linked child
+    child_attendance_df = get_attendance_data(child_name=child_name_link)
+    
+    if child_attendance_df.empty:
+        st.info(f"No attendance history found for {child_name_link}.")
+        return
+
+    # Convert date column to datetime for filtering
+    child_attendance_df['date'] = pd.to_datetime(child_attendance_df['date'])
+    
+    # Filter by selected date range
+    parent_filtered_df = child_attendance_df[
+        (child_attendance_df['date'].dt.date >= p_start_date) & 
+        (child_attendance_df['date'].dt.date <= p_end_date)
+    ].sort_values(by='date', ascending=False)
+    
+    
+    if parent_filtered_df.empty:
+        st.info(f"No attendance records found for {child_name_link} between {p_start_date} and {p_end_date}.")
+    else:
+        # Format the date back to string for cleaner display
+        parent_filtered_df['date'] = parent_filtered_df['date'].dt.strftime('%Y-%m-%d')
+        
+        # Select and rename columns for display
+        display_df = parent_filtered_df[['date', 'status']]
+        display_df.columns = ["Date", "Status"]
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+
+    st.markdown("---")
+    
+    # 3. Display Latest Progress Notes (Example - keep this section simple for now)
     st.header("Latest Progress Notes")
     
     progress_df = get_data("progress")
@@ -92,16 +190,19 @@ def show_parent_dashboard(child_name_link):
 
 
 def show_staff_dashboard():
-    """Dashboard view for all other Staff/Admin roles (excluding ECE)."""
+    """Dashboard view for all other Staff/Admin roles."""
     st.title("📊 Program Dashboard & Reports (Staff View)")
     st.info("Coming Soon: Comprehensive program overview and custom reporting tools.")
     st.markdown("---")
-    # You would build summary tables and charts here
 
 # --- ENTRY POINT FUNCTION ---
 
 def show_page():
     """Wrapper function called by app.py to display the correct dashboard based on role."""
+    if not st.session_state.get('logged_in', False):
+        st.error("Please log in to access the Dashboard.")
+        return
+        
     user_role = st.session_state.get('role', '')
 
     if user_role == 'parent':
