@@ -1,9 +1,8 @@
-# app.py
+# app.py (Final Version with Billing & Schedule)
 import streamlit as st
-# FIXED: Database functions are now imported from the new location (views.database)
 from views.database import init_db, get_user
-# Import the new admin tools page
-from views import tracker, planner, dashboard, admin_tools 
+# IMPORT NEW MODULES HERE
+from views import tracker, planner, dashboard, admin_tools, billing, schedule
 
 # Initialize Database
 init_db()
@@ -25,18 +24,15 @@ def login_screen():
             
             if user_data:
                 st.session_state["logged_in"] = True
-                # FIX 1: Change "user_role" key to "role" for consistency with tracker.py
-                st.session_state["role"] = user_data["role"] 
+                st.session_state["role"] = str(user_data["role"])
                 st.session_state["username"] = user_data["username"]
-                # Store the child link for parent filtering
-                st.session_state["child_link"] = user_data["child_link"]
-                st.success(f"Welcome, {user_data['username']} ({user_data['role']})!")
+                st.session_state["child_link"] = user_data.get("child_link", "")
+                st.success(f"Welcome, {user_data['username']}!")
                 st.rerun()
             else:
                 st.error("Incorrect username or password")
 
 def main():
-    # Check Login Status
     if "logged_in" not in st.session_state:
         st.session_state["logged_in"] = False
 
@@ -45,40 +41,57 @@ def main():
         return
 
     # --- SIDEBAR NAVIGATION ---
-    # FIX 2: Retrieve role using the corrected key "role"
-    user_role = st.session_state["role"] 
-    username = st.session_state["username"]
-    st.sidebar.title(f"👤 User: {username.capitalize()}")
+    user_role = str(st.session_state.get("role", "")).lower()
+    username = st.session_state.get("username", "User")
+    
+    st.sidebar.title(f"👤 {username.capitalize()}")
     st.sidebar.markdown(f"**Role:** {user_role.upper()}")
     
     # Define available pages based on Role
     pages = {}
     
-    # Admin has all permissions
+    # 1. ADMIN TOOLS
     if user_role == "admin":
         pages["🔑 Admin Tools"] = admin_tools.show_page
+        pages["🗓️ Master Schedule"] = schedule.show_page
+        pages["💳 Billing Management"] = billing.show_page
     
-    # Staff/Therapists/Admin roles
-    if user_role in ["admin", "OT", "SLP", "BC", "ECE", "Assistant", "staff"]:
+    # 2. STAFF TOOLS (Therapists, ECE, Staff)
+    # Note: Staff view remains exactly as it was.
+    staff_roles = ["admin", "ot", "slp", "bc", "ece", "assistant", "staff", "therapist"]
+    if user_role in staff_roles:
         pages["📝 Progress Tracker"] = tracker.show_page
         pages["📅 Daily Planner"] = planner.show_page
+        # If user is Admin, they see the dashboard here too
+        if user_role == "admin":
+            pages["📊 Program Dashboard"] = dashboard.show_page
+        else:
+            pages["📊 Dashboard & Reports"] = dashboard.show_page
     
-    # Dashboard view changes based on role
+    # 3. PARENT TOOLS (Expanded)
     if user_role == "parent":
-        child_name = st.session_state.get("child_link", "My Child")
-        pages[f"📊 My Child's Dashboard"] = dashboard.show_page
-    else:
-        pages["📊 Dashboard & Reports"] = dashboard.show_page
+        # 1. Existing Dashboard (Progress & Attendance) - UNTOUCHED
+        pages[f"📊 Dashboard"] = dashboard.show_page
+        
+        # 2. NEW: Appointment Schedule
+        pages[f"🗓️ Appointments"] = schedule.show_page
+        
+        # 3. NEW: Billing & Invoices
+        pages[f"💳 Billing & Invoices"] = billing.show_page
 
+    # Sidebar Selection
     selection = st.sidebar.radio("Go to:", list(pages.keys()))
     
+    st.sidebar.divider()
     if st.sidebar.button("Log Out"):
         st.session_state.clear()
-        st.session_state["logged_in"] = False
         st.rerun()
 
     # Display Selected Page
-    pages[selection]()
+    try:
+        pages[selection]()
+    except Exception as e:
+        st.error(f"Error loading page: {e}")
 
 if __name__ == "__main__":
     main()
