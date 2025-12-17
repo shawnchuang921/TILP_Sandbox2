@@ -9,7 +9,6 @@ def show_progress_input():
     st.subheader("Log Progress")
 
     # --- 1. Check for Edit Mode ---
-    # We check if the user clicked "Edit" in the view section below
     is_edit_mode = st.session_state.get('edit_mode', False)
     edit_data = st.session_state.get('edit_data', {})
 
@@ -53,7 +52,6 @@ def show_progress_input():
             disc_index = discipline_options.index(edit_data.get('discipline'))
     else:
         # Therapists only see their own role (assuming role matches discipline name)
-        # If the role isn't in the list (e.g., specific naming mismatch), show all as fallback
         if user_role in all_disciplines:
             discipline_options = [user_role]
             disc_index = 0
@@ -86,13 +84,10 @@ def show_progress_input():
     notes = st.text_area("Clinical Notes", value=notes_default)
 
     # Media Upload
-    # Note: Media files are not easily re-populated in file_uploader during edit
-    # We will keep the old path if no new file is uploaded
     uploaded_file = st.file_uploader("Upload Photo/Video (Optional)", type=['png', 'jpg', 'jpeg', 'mp4', 'mov'])
 
     # --- 3. Save / Update Action ---
     
-    # Change button label based on mode
     btn_label = "Update Progress" if is_edit_mode else "Save Progress"
 
     if st.button(btn_label, type="primary"):
@@ -103,9 +98,8 @@ def show_progress_input():
             media_path = edit_data.get('media_path', None) if is_edit_mode else None
             
             if uploaded_file:
-                # Save locally (temporary for now until cloud storage is added)
+                # Save locally (temporary)
                 os.makedirs("media", exist_ok=True)
-                # Create a unique filename to prevent overwrites
                 import uuid
                 ext = uploaded_file.name.split('.')[-1]
                 filename = f"{uuid.uuid4()}.{ext}"
@@ -129,7 +123,6 @@ def show_progress_input():
                     media_path=media_path
                 )
                 st.success("Entry updated successfully!")
-                # Exit edit mode
                 st.session_state.edit_mode = False
                 st.session_state.edit_data = {}
                 st.rerun()
@@ -176,7 +169,6 @@ def show_progress_data():
     # --- Display Loop ---
     for index, row in progress_data.iterrows():
         # Determine Permissions
-        # Admin can edit anything. Users can only edit their own entries.
         is_author = (row.get('author') == current_user)
         is_admin = (current_role == 'admin')
         can_modify = is_author or is_admin
@@ -213,7 +205,6 @@ def show_progress_data():
                 
                 with c2:
                     # DELETE BUTTON
-                    # We use a nested check to confirm deletion to avoid accidents
                     if st.button("🗑️ Delete", key=f"del_btn_{row['id']}"):
                         st.session_state[f"confirm_del_{row['id']}"] = True
                         st.rerun()
@@ -232,3 +223,21 @@ def show_progress_data():
                         if st.button("Cancel", key=f"no_del_{row['id']}"):
                             del st.session_state[f"confirm_del_{row['id']}"]
                             st.rerun()
+
+# --- NEW ENTRY POINT FUNCTION ---
+def show_page():
+    """Wrapper function called by app.py to display the entire Progress Tracker page."""
+    # Ensure user is logged in before rendering the page content
+    if not st.session_state.get('logged_in', False):
+        st.error("Please log in to access the Progress Tracker.")
+        return
+
+    # If in edit mode, show only the input form at the top
+    if st.session_state.get('edit_mode', False):
+        show_progress_input()
+        st.markdown("---")
+        show_progress_data() # Show history below the edit form
+    else:
+        # Default view: show input form and history
+        show_progress_input()
+        show_progress_data()
