@@ -1,4 +1,3 @@
-# views/database.py
 import pandas as pd
 from datetime import datetime
 import streamlit as st 
@@ -23,7 +22,6 @@ ENGINE = get_engine()
 def init_db():
     if not ENGINE: return
     with ENGINE.connect() as conn:
-        # Tables with author column included
         conn.execute(text('''CREATE TABLE IF NOT EXISTS progress (
             id SERIAL PRIMARY KEY, date TEXT, child_name TEXT, discipline TEXT, 
             goal_area TEXT, status TEXT, notes TEXT, media_path TEXT, author TEXT)'''))
@@ -37,14 +35,64 @@ def init_db():
             id SERIAL PRIMARY KEY, date TEXT, child_name TEXT, status TEXT, 
             logged_by TEXT, UNIQUE (date, child_name))'''))
         
-        # Standard User and List Tables
         conn.execute(text("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT, child_link TEXT)"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS children (id SERIAL PRIMARY KEY, child_name TEXT UNIQUE, parent_username TEXT, date_of_birth TEXT)"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS disciplines (name TEXT UNIQUE)"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS goal_areas (name TEXT UNIQUE)"))
         conn.commit()
 
-# --- Session Plan Logic ---
+# --- AUTHENTICATION (Required by app.py) ---
+
+def get_user(username, password):
+    if not ENGINE: return None
+    sql_query = text("SELECT username, password, role, child_link FROM users WHERE username = :user AND password = :pass")
+    with ENGINE.connect() as conn:
+        df = pd.read_sql(sql_query, conn, params={"user": username, "pass": password})
+    if not df.empty:
+        return df.iloc[0].to_dict()
+    return None
+
+def upsert_user(username, password, role, child_link):
+    if not ENGINE: return
+    with ENGINE.connect() as conn:
+        result = conn.execute(text("SELECT username FROM users WHERE username = :u"), {"u": username}).fetchone()
+        if result:
+            if password:
+                sql = text("UPDATE users SET password=:p, role=:r, child_link=:c WHERE username=:u")
+                params = {"u": username, "p": password, "r": role, "c": child_link}
+            else:
+                sql = text("UPDATE users SET role=:r, child_link=:c WHERE username=:u")
+                params = {"u": username, "r": role, "c": child_link}
+        else:
+            sql = text("INSERT INTO users (username, password, role, child_link) VALUES (:u, :p, :r, :c)")
+            params = {"u": username, "p": password, "r": role, "c": child_link}
+        conn.execute(sql, params)
+        conn.commit()
+
+def delete_user(username):
+    if not ENGINE: return
+    with ENGINE.connect() as conn:
+        conn.execute(text("DELETE FROM users WHERE username = :u"), {"u": username})
+        conn.commit()
+
+# --- DATA RETRIEVAL ---
+
+def get_data(table):
+    if not ENGINE: return pd.DataFrame()
+    with ENGINE.connect() as conn:
+        inspector = inspect(ENGINE)
+        cols = [c['name'] for c in inspector.get_columns(table)]
+        if 'author' not in cols and table in ['progress', 'session_plans']:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN author TEXT"))
+            conn.commit()
+        return pd.read_sql_query(f"SELECT * FROM {table}", conn)
+
+def get_list_data(table):
+    if not ENGINE: return pd.DataFrame()
+    with ENGINE.connect() as conn:
+        return pd.read_sql_query(f"SELECT * FROM {table}", conn)
+
+# --- PLANNER CRUD ---
 
 def save_plan(date, lead, support, wu, lb, rb, sp, cr, mn, notes, author):
     if not ENGINE: return
@@ -72,21 +120,28 @@ def delete_plan(plan_id):
         conn.execute(text("DELETE FROM session_plans WHERE id = :id"), {"id": plan_id})
         conn.commit()
 
-# --- General Data Getters ---
-def get_data(table):
-    if not ENGINE: return pd.DataFrame()
-    with ENGINE.connect() as conn:
-        # Dynamic check for missing author column (migration safety)
-        inspector = inspect(ENGINE)
-        cols = [c['name'] for c in inspector.get_columns(table)]
-        if 'author' not in cols and table in ['progress', 'session_plans']:
-            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN author TEXT"))
-            conn.commit()
-        return pd.read_sql_query(f"SELECT * FROM {table}", conn)
+# --- OTHER HELPERS ---
 
-def get_list_data(table):
-    if not ENGINE: return pd.DataFrame()
+def upsert_child(cn, pu, dob):
+    if not ENGINE: return
     with ENGINE.connect() as conn:
-        return pd.read_sql_query(f"SELECT * FROM {table}", conn)
+        conn.execute(text("INSERT INTO children (child_name, parent_username, date_of_birth) VALUES (:cn, :pu, :dob) ON CONFLICT (child_name) DO UPDATE SET parent_username=EXCLUDED.parent_username, date_of_birth=EXCLUDED.date_of_birth"), {"cn": cn, "pu": pu, "dob": dob})
+        conn.commit()
 
-# (Keep your existing get_user, upsert_user, get_attendance_data, save_progress etc. functions here)
+def delete_child(cn):
+    if not ENGINE: return
+    with ENGINE.connect() as conn:
+        conn.execute(text("DELETE FROM children WHERE child_name = :cn"), {"cn": cn})
+        conn.commit()
+
+def upsert_list_item(table, item):
+    if not ENGINE: return
+    with ENGINE.connect() as conn:
+        conn.execute(text(f"INSERT INTO {table} (name) VALUES (:n) ON CONFLICT (name) DO NOTHING"), {"n": item})
+        conn.commit()
+
+def delete_list_item(table, item):
+    if not ENGINE: return
+    with ENGINE.connect() as conn:
+        conn.execute(text(f"DELETE FROM {table} WHERE name = :n"), {"n": item})
+        conn.commit()
