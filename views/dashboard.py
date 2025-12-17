@@ -7,98 +7,87 @@ from .database import get_list_data, get_data, upsert_attendance, get_attendance
 def show_page():
     st.title("📊 Program Dashboard")
     
-    user_role = st.session_state.get('role', 'staff')
+    user_role = st.session_state.get('role', '').lower()
     username = st.session_state.get('username')
     child_link = st.session_state.get('child_link')
 
-    # --- PARENT VIEW ---
+    # --- 1. PARENT VIEW ---
     if user_role == 'parent':
-        st.subheader(f"👋 Welcome! Attendance Overview for {child_link}")
-        
-        if not child_link or child_link == "None":
-            st.warning("Your account is not yet linked to a child profile. Please contact the administrator.")
-            return
-
-        # Date Filter for Parents
-        col1, col2 = st.columns(2)
-        start_date = col1.date_input("Start Date", date.today() - timedelta(days=30))
-        end_date = col2.date_input("End Date", date.today())
-
-        # Fetch Data
-        df_att = get_attendance_data(child_name=child_link)
-
-        if not df_att.empty:
-            # Convert and Filter
-            df_att['date'] = pd.to_datetime(df_att['date']).dt.date
-            df_filtered = df_att[(df_att['date'] >= start_date) & (df_att['date'] <= end_date)]
-            
-            if not df_filtered.empty:
-                # Calculate Stats
-                total_days = len(df_filtered)
-                present_days = len(df_filtered[df_filtered['status'] == 'Present'])
-                absent_days = len(df_filtered[df_filtered['status'] == 'Absent'])
-                
-                # Metrics
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Total Days Logged", total_days)
-                m2.metric("Days Present", present_days)
-                m3.metric("Days Absent", absent_days)
-
-                st.divider()
-                st.write("### Detailed Attendance Log")
-                st.dataframe(
-                    df_filtered[['date', 'status']].sort_values('date', ascending=False),
-                    use_container_width=True,
-                    hide_index=True
-                )
-            else:
-                st.info("No attendance records found for this date range.")
-        else:
-            st.info("No attendance records found for your child yet.")
-
-    # --- STAFF/ADMIN VIEW ---
+        show_parent_dashboard(child_link)
+    
+    # --- 2. STAFF & ADMIN VIEW ---
     else:
-        st.subheader("📋 Staff Attendance Management")
+        # --- ROW 1: ATTENDANCE LOGGING (ECE/ADMIN ONLY) ---
+        if user_role in ['ece', 'admin']:
+            with st.expander("📝 Log Today's Attendance (ECE/Admin Only)", expanded=False):
+                with st.form("att_form"):
+                    att_date = st.date_input("Date", date.today())
+                    child_df = get_list_data("children")
+                    if not child_df.empty:
+                        selected_child = st.selectbox("Select Child", child_df['child_name'].tolist())
+                        status = st.radio("Status", ["Present", "Absent", "Late"], horizontal=True)
+                        if st.form_submit_button("Submit Attendance"):
+                            upsert_attendance(att_date.isoformat(), selected_child, status, username)
+                            st.success(f"Attendance logged for {selected_child}")
+                            st.rerun()
         
-        # Attendance Entry Form
-        with st.expander("➕ Log Today's Attendance", expanded=False):
-            with st.form("att_form"):
-                att_date = st.date_input("Date", date.today())
-                child_df = get_list_data("children")
-                
-                if not child_df.empty:
-                    selected_child = st.selectbox("Child", child_df['child_name'].tolist())
-                    status = st.radio("Status", ["Present", "Absent", "Late"], horizontal=True)
-                    
-                    if st.form_submit_button("Submit Attendance"):
-                        upsert_attendance(att_date.isoformat(), selected_child, status, username)
-                        st.success(f"Attendance logged for {selected_child}")
-                        st.rerun()
-                else:
-                    st.error("No children profiles found.")
-
+        # --- ROW 2: DAILY SESSION PLANS ---
+        st.subheader("📅 Today's Session Plan")
+        df_plans = get_data("session_plans")
+        if not df_plans.empty:
+            df_plans['date'] = pd.to_datetime(df_plans['date']).dt.date
+            today_plan = df_plans[df_plans['date'] == date.today()]
+            if not today_plan.empty:
+                for _, plan in today_plan.iterrows():
+                    st.info(f"**Lead:** {plan['lead_staff']} | **Support:** {plan['support_staff']}")
+                    st.write(f"**Learning Block:** {plan['learning_block']}")
+            else:
+                st.write("No session plan logged for today.")
+        
         st.divider()
+
+        # --- ROW 3: ATTENDANCE & PROGRESS OVERVIEW ---
+        col_left, col_right = st.columns(2)
+
+        with col_left:
+            st.subheader("📋 Attendance Overview")
+            df_att = get_attendance_data()
+            if not df_att.empty:
+                st.dataframe(df_att[['date', 'child_name', 'status']].head(10), use_container_width=True, hide_index=True)
+            else:
+                st.write("No attendance records.")
+
+        with col_right:
+            st.subheader("📝 Recent Progress Notes")
+            df_prog = get_data("progress")
+            if not df_prog.empty:
+                df_prog = df_prog.sort_values(by='date', ascending=False)
+                st.dataframe(df_prog[['date', 'child_name', 'discipline', 'status']].head(10), use_container_width=True, hide_index=True)
+            else:
+                st.write("No progress notes.")
+
+def show_parent_dashboard(child_link):
+    """Encapsulated view for Parents to keep code clean."""
+    st.subheader(f"👋 Attendance Overview for {child_link}")
+    if not child_link or child_link in ["None", "All"]:
+        st.warning("Account not linked to a specific child profile.")
+        return
+
+    col1, col2 = st.columns(2)
+    start_d = col1.date_input("Start Date", date.today() - timedelta(days=30))
+    end_d = col2.date_input("End Date", date.today())
+
+    df_att = get_attendance_data(child_name=child_link)
+    if not df_att.empty:
+        df_att['date'] = pd.to_datetime(df_att['date']).dt.date
+        mask = (df_att['date'] >= start_d) & (df_att['date'] <= end_d)
+        df_filtered = df_att.loc[mask]
         
-        # Staff Search/Filter
-        st.write("### All Attendance Records")
-        df_all = get_attendance_data()
-        
-        if not df_all.empty:
-            # Filter by child or date
-            staff_col1, staff_col2 = st.columns(2)
-            filter_child = staff_col1.selectbox("Filter by Child", ["All"] + list(df_all['child_name'].unique()))
-            
-            df_display = df_all.copy()
-            if filter_child != "All":
-                df_display = df_display[df_display['child_name'] == filter_child]
-            
-            st.dataframe(df_display, use_container_width=True, hide_index=True)
-            
-            # Admin Delete Function
-            if user_role == 'admin':
-                del_id = st.number_input("Enter ID to Delete", min_value=0, step=1)
-                if st.button("🗑️ Delete Record"):
-                    delete_attendance(del_id)
-                    st.rerun()
+        if not df_filtered.empty:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Present", len(df_filtered[df_filtered['status'] == 'Present']))
+            m2.metric("Absent", len(df_filtered[df_filtered['status'] == 'Absent']))
+            m3.metric("Late", len(df_filtered[df_filtered['status'] == 'Late']))
+            st.table(df_filtered[['date', 'status']].sort_values('date', ascending=False))
         else:
-            st.info("No records found.")
+            st.info("No records for selected dates.")
