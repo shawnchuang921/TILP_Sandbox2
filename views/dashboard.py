@@ -2,7 +2,10 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
-from .database import get_list_data, get_data, upsert_attendance, get_attendance_data, delete_attendance
+from .database import (
+    get_list_data, get_data, upsert_attendance, 
+    get_attendance_data, delete_attendance
+)
 
 def show_page():
     st.title("📊 Program Dashboard")
@@ -33,7 +36,6 @@ def show_page():
         filtered_plans = df_plans.loc[mask].sort_values('date', ascending=False)
         
         if not filtered_plans.empty:
-            # Download Plans Button
             csv_plans = filtered_plans.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Download Filtered Plans (CSV)",
@@ -48,7 +50,6 @@ def show_page():
                 label = f"🗓️ {plan['date']} - Lead: {plan['lead_staff']} {'(TODAY)' if is_today else ''}"
                 with st.expander(label, expanded=is_today):
                     st.write(f"**Lead:** {plan['lead_staff']} | **Support:** {plan['support_staff']}")
-                    st.write(f"**Warm Up:** {plan['warm_up']}")
                     st.write(f"**Learning Block:** {plan['learning_block']}")
                     st.write(f"**Regulation Break:** {plan['regulation_break']}")
                     st.write(f"**Social Play:** {plan['social_play']}")
@@ -58,15 +59,19 @@ def show_page():
                         st.warning(f"**Internal Notes:** {plan['internal_notes']}")
         else:
             st.info("No plans found for this date range.")
-    else:
-        st.info("No session plans in database.")
     
     st.divider()
 
     # --- SECTION B: ATTENDANCE MANAGEMENT ---
     st.subheader("📋 Attendance Management")
-    if user_role in ['ece', 'admin']:
-        with st.expander("📝 Log Today's Attendance (ECE/Admin Only)"):
+    
+    # Check for ECE/Admin permissions
+    is_privileged = user_role in ['ece', 'admin']
+
+    if is_privileged:
+        col_entry, col_edit = st.columns(2)
+        
+        with col_entry.expander("📝 Log New Attendance", expanded=False):
             with st.form("staff_att_form"):
                 att_date = st.date_input("Date", date.today())
                 child_df = get_list_data("children")
@@ -78,16 +83,39 @@ def show_page():
                         st.success(f"Logged {status} for {selected_child}")
                         st.rerun()
 
+        with col_edit.expander("🛠️ Edit/Delete Records", expanded=False):
+            st.write("Enter the Record ID (from the table below) to modify it.")
+            target_id = st.number_input("Record ID", min_value=1, step=1)
+            new_status = st.selectbox("New Status", ["Present", "Absent", "Late", "Delete Record"])
+            
+            if st.button("Apply Change", type="primary"):
+                df_temp = get_attendance_data()
+                target_row = df_temp[df_temp['id'] == target_id]
+                
+                if not target_row.empty:
+                    if new_status == "Delete Record":
+                        delete_attendance(target_id)
+                        st.warning(f"Record {target_id} deleted.")
+                    else:
+                        # Re-save with new status
+                        row = target_row.iloc[0]
+                        upsert_attendance(row['date'], row['child_name'], new_status, username)
+                        st.success(f"Record {target_id} updated to {new_status}.")
+                    st.rerun()
+                else:
+                    st.error("ID not found.")
+
     # Staff Attendance Filter/Table
-    st.write("### Filter Attendance History")
+    st.write("### Attendance History")
     col_a1, col_a2 = st.columns(2)
-    a_start = col_a1.date_input("Attendance From", date.today() - timedelta(days=7), key="st_att_s")
-    a_end = col_a2.date_input("Attendance To", date.today(), key="st_att_e")
+    a_start = col_a1.date_input("From", date.today() - timedelta(days=7), key="st_att_s")
+    a_end = col_a2.date_input("To", date.today(), key="st_att_e")
 
     df_att = get_attendance_data()
     if not df_att.empty:
         df_att['date'] = pd.to_datetime(df_att['date']).dt.date
         df_att_f = df_att[(df_att['date'] >= a_start) & (df_att['date'] <= a_end)]
+        # We show the ID column here so staff can see which ID to type into the Edit box
         st.dataframe(df_att_f.sort_values('date', ascending=False), use_container_width=True, hide_index=True)
     
     st.divider()
@@ -108,7 +136,6 @@ def show_page():
             df_p_filt = df_p_filt[df_p_filt['child_name'].str.contains(p_search, case=False)]
         
         if not df_p_filt.empty:
-            # Download Progress Button
             csv_prog = df_p_filt.sort_values('date', ascending=False).to_csv(index=False).encode('utf-8')
             st.download_button("📥 Download Filtered Progress (CSV)", data=csv_prog, file_name="Progress_Report.csv", key="dl_st_prog")
             
