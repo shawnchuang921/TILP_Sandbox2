@@ -1,4 +1,4 @@
-# views/database.py
+# views/database.py (FINAL VERSION - Including Attendance Table)
 import pandas as pd
 from datetime import datetime
 import streamlit as st 
@@ -83,13 +83,27 @@ def init_db():
             internal_notes TEXT
         )'''))
 
+        # --- NEW: ATTENDANCE TABLE ---
+        conn.execute(text('''CREATE TABLE IF NOT EXISTS attendance (
+            id SERIAL PRIMARY KEY,
+            date TEXT,
+            child_name TEXT,
+            status TEXT, 
+            logged_by TEXT,
+            UNIQUE (date, child_name)
+        )'''))
+
+
         # Initial Data Load
+        # Only hardcode the admin user for initial access.
         conn.execute(text("INSERT INTO users (username, password, role, child_link) VALUES (:u, :p, :r, :c) ON CONFLICT (username) DO NOTHING"),
                      {"u": "adminuser", "p": "admin123", "r": "admin", "c": "All"})
         
+        # Add default disciplines/roles
         for d in ["OT", "SLP", "BC", "ECE", "Assistant"]:
             conn.execute(text("INSERT INTO disciplines (name) VALUES (:n) ON CONFLICT (name) DO NOTHING"), {"n": d})
             
+        # Add default goal areas
         for g in ["Regulation", "Communication", "Fine Motor", "Social Play"]:
             conn.execute(text("INSERT INTO goal_areas (name) VALUES (:n) ON CONFLICT (name) DO NOTHING"), {"n": g})
             
@@ -193,28 +207,31 @@ def get_data(table_name):
     """Retrieves all data from a table (Progress or Plans)."""
     if not ENGINE: return pd.DataFrame()
     
-    if table_name == "progress":
-        try:
-             with ENGINE.connect() as conn:
-                 # Check if 'author' column exists and create it if not
-                 inspector = inspect(ENGINE)
-                 columns = [c['name'] for c in inspector.get_columns('progress')]
-                 if 'author' not in columns:
-                      conn.execute(text("ALTER TABLE progress ADD COLUMN author TEXT"))
-                      conn.commit()
-                 
-                 df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
-                 return df
-        except Exception as e:
-            st.warning(f"Error checking/creating 'author' column: {e}")
-            return pd.DataFrame()
-    
-    with ENGINE.connect() as conn:
-        df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
-    return df
+    # Simple retrieval for session_plans
+    if table_name != "progress":
+        with ENGINE.connect() as conn:
+            df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
+        return df
+
+    # Progress table: ensure 'author' column exists before reading
+    try:
+         with ENGINE.connect() as conn:
+             inspector = inspect(ENGINE)
+             columns = [c['name'] for c in inspector.get_columns('progress')]
+             if 'author' not in columns:
+                  conn.execute(text("ALTER TABLE progress ADD COLUMN author TEXT"))
+                  conn.commit()
+             
+             df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
+             return df
+    except Exception as e:
+        # Fallback if connection or query fails
+        st.warning(f"Error accessing 'progress' table: {e}")
+        return pd.DataFrame()
+
 
 def save_progress(date, child, discipline, goal, status, notes, media_path, author):
-    """Saves a new progress entry."""
+    """Saves a new progress entry, including the author."""
     if not ENGINE: return
     sql_stmt = text("""
         INSERT INTO progress (date, child_name, discipline, goal_area, status, notes, media_path, author) 
@@ -228,7 +245,7 @@ def save_progress(date, child, discipline, goal, status, notes, media_path, auth
         conn.commit()
 
 def update_progress(id, date, child, discipline, goal, status, notes, media_path):
-    """Updates an existing progress entry."""
+    """Updates an existing progress entry. Author is not updated."""
     if not ENGINE: return
     sql_stmt = text("""
         UPDATE progress 
@@ -266,3 +283,42 @@ def save_plan(date, lead_staff, support_staff, warm_up, learning_block, regulati
             "sp": social_play, "cr": closing_routine, "mn": materials_needed, "in": internal_notes
         })
         conn.commit()
+
+# --- Attendance Functions (NEW) ---
+
+def upsert_attendance(date, child_name, status, logged_by):
+    """Inserts or updates a daily attendance record."""
+    if not ENGINE: return
+    sql_stmt = text("""
+        INSERT INTO attendance (date, child_name, status, logged_by) 
+        VALUES (:d, :cn, :s, :lb)
+        ON CONFLICT (date, child_name) DO UPDATE 
+        SET status = EXCLUDED.status, 
+            logged_by = EXCLUDED.logged_by;
+    """)
+    with ENGINE.connect() as conn:
+        conn.execute(sql_stmt, {
+            "d": date, "cn": child_name, "s": status, "lb": logged_by
+        })
+        conn.commit()
+
+def get_attendance_data(date=None, child_name=None):
+    """Retrieves attendance data, filtered by date or child."""
+    if not ENGINE: return pd.DataFrame()
+    
+    query = "SELECT * FROM attendance"
+    params = {}
+    
+    if date and child_name:
+        query += " WHERE date = :d AND child_name = :cn"
+        params = {"d": date, "cn": child_name}
+    elif date:
+        query += " WHERE date = :d"
+        params = {"d": date}
+    elif child_name:
+        query += " WHERE child_name = :cn ORDER BY date DESC"
+        params = {"cn": child_name}
+
+    with ENGINE.connect() as conn:
+        df = pd.read_sql_query(text(query), conn, params=params)
+    return df
