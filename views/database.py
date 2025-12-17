@@ -97,7 +97,35 @@ def get_list_data(table):
     with ENGINE.connect() as conn:
         return pd.read_sql_query(f"SELECT * FROM {table}", conn)
 
-# --- ATTENDANCE (Fixes dashboard.py error) ---
+# --- PROGRESS TRACKER (RESTORED) ---
+
+def save_progress(date, child, discipline, goal, status, notes, media_path, author):
+    if not ENGINE: return
+    sql = text("""
+        INSERT INTO progress (date, child_name, discipline, goal_area, status, notes, media_path, author) 
+        VALUES (:d, :c, :dis, :g, :s, :n, :m, :a)
+    """)
+    with ENGINE.connect() as conn:
+        conn.execute(sql, {"d": date, "c": child, "dis": discipline, "g": goal, "s": status, "n": notes, "m": media_path, "a": author})
+        conn.commit()
+
+def update_progress(id, date, child, discipline, goal, status, notes, media_path):
+    if not ENGINE: return
+    sql = text("""
+        UPDATE progress SET date=:d, child_name=:c, discipline=:dis, goal_area=:g, 
+        status=:s, notes=:n, media_path=:m WHERE id=:id
+    """)
+    with ENGINE.connect() as conn:
+        conn.execute(sql, {"id": id, "d": date, "c": child, "dis": discipline, "g": goal, "s": status, "n": notes, "m": media_path})
+        conn.commit()
+
+def delete_progress(progress_id):
+    if not ENGINE: return
+    with ENGINE.connect() as conn:
+        conn.execute(text("DELETE FROM progress WHERE id = :id"), {"id": progress_id})
+        conn.commit()
+
+# --- ATTENDANCE ---
 
 def upsert_attendance(date, child_name, status, logged_by):
     if not ENGINE: return
