@@ -1,4 +1,4 @@
-# views/tracker.py
+# views/tracker.py (COMPLETE REPLACEMENT)
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -23,7 +23,7 @@ def show_progress_input():
         try:
             default_date = datetime.strptime(edit_data['date'], '%Y-%m-%d')
         except:
-            pass # Use today if parsing fails
+            pass 
 
     date = st.date_input("Date", value=default_date)
 
@@ -31,7 +31,6 @@ def show_progress_input():
     children_df = db.get_list_data("children")
     child_options = children_df['child_name'].tolist() if not children_df.empty else []
     
-    # Set default index for child if editing
     child_index = None
     if is_edit_mode and edit_data.get('child_name') in child_options:
         child_index = child_options.index(edit_data.get('child_name'))
@@ -43,19 +42,19 @@ def show_progress_input():
     discipline_df = db.get_list_data("disciplines")
     all_disciplines = discipline_df['name'].tolist() if not discipline_df.empty else []
 
+    # --- FIX APPLIED HERE: Guarantee single option for non-admin ---
     if user_role == 'admin':
-        # Admin sees all options
         discipline_options = all_disciplines
         disc_index = None
-        # If editing, try to match the existing discipline
         if is_edit_mode and edit_data.get('discipline') in discipline_options:
             disc_index = discipline_options.index(edit_data.get('discipline'))
     else:
-        # Therapists only see their own role (assuming role matches discipline name)
+        # If the user's role (e.g., 'OT') is a valid discipline, restrict the options to just that role.
         if user_role in all_disciplines:
             discipline_options = [user_role]
             disc_index = 0
         else:
+            # Fallback (shouldn't happen if user roles match disciplines)
             discipline_options = all_disciplines
             disc_index = None
             
@@ -224,14 +223,25 @@ def show_progress_data():
                             del st.session_state[f"confirm_del_{row['id']}"]
                             st.rerun()
 
-# --- NEW ENTRY POINT FUNCTION ---
+# --- ENTRY POINT FUNCTION ---
 def show_page():
     """Wrapper function called by app.py to display the entire Progress Tracker page."""
-    # Ensure user is logged in before rendering the page content
     if not st.session_state.get('logged_in', False):
         st.error("Please log in to access the Progress Tracker.")
         return
 
+    # Check if a specific entry is being edited and handle the form display
+    if st.session_state.get('edit_id'):
+        # If an ID is set for editing, switch to edit mode
+        if not st.session_state.get('edit_mode', False):
+             # Fetch the data for the ID stored in session state
+             all_data = db.get_data("progress")
+             edit_row = all_data[all_data['id'] == st.session_state.edit_id].iloc[0]
+             st.session_state.edit_data = edit_row.to_dict()
+             st.session_state.edit_mode = True
+             del st.session_state.edit_id # Clear the flag after setting data
+             st.rerun() # Rerun to switch to edit mode
+        
     # If in edit mode, show only the input form at the top
     if st.session_state.get('edit_mode', False):
         show_progress_input()
