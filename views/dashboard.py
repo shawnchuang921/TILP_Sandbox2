@@ -18,39 +18,59 @@ def show_page():
 
     # --- 2. STAFF & ADMIN VIEW ---
     
-    # --- SECTION A: TODAY'S FULL SESSION PLAN ---
-    st.subheader("📅 Today's Full Session Plan")
+    # --- SECTION A: SESSION PLAN ARCHIVE & VIEWER ---
+    st.subheader("📅 Session Plan Explorer")
     df_plans = get_data("session_plans")
+    
     if not df_plans.empty:
-        df_plans['date'] = pd.to_datetime(df_plans['date']).dt.date
-        today_plan = df_plans[df_plans['date'] == date.today()]
+        # Filter UI
+        col_s1, col_s2 = st.columns(2)
+        plan_start = col_s1.date_input("Plans From", date.today() - timedelta(days=7))
+        plan_end = col_s2.date_input("Plans To", date.today() + timedelta(days=7))
         
-        if not today_plan.empty:
-            plan = today_plan.iloc[0]
-            with st.container(border=True):
-                c1, c2 = st.columns(2)
-                c1.write(f"**Lead:** {plan['lead_staff']}")
-                c2.write(f"**Support:** {plan['support_staff']}")
+        # Data Processing
+        df_plans['date'] = pd.to_datetime(df_plans['date']).dt.date
+        mask = (df_plans['date'] >= plan_start) & (df_plans['date'] <= plan_end)
+        filtered_plans = df_plans.loc[mask].sort_values('date', ascending=False)
+        
+        if not filtered_plans.empty:
+            # Quick Download for the filtered range
+            csv_range = filtered_plans.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Filtered Plans (CSV)",
+                data=csv_range,
+                file_name=f"Plans_{plan_start}_to_{plan_end}.csv",
+                mime="text/csv",
+            )
+
+            for _, plan in filtered_plans.iterrows():
+                # Highlight today's plan specifically
+                is_today = plan['date'] == date.today()
+                label = f"🗓️ {plan['date']} - Lead: {plan['lead_staff']} {'(TODAY)' if is_today else ''}"
                 
-                st.write(f"**Warm Up:** {plan['warm_up']}")
-                st.write(f"**Learning Block:** {plan['learning_block']}")
-                st.write(f"**Regulation Break:** {plan['regulation_break']}")
-                st.write(f"**Social Play:** {plan['social_play']}")
-                st.write(f"**Closing Routine:** {plan['closing_routine']}")
-                st.info(f"**Materials Needed:** {plan['materials_needed']}")
-                
-                # Download Button for Today's Plan
-                plan_csv = today_plan.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Download Today's Plan (CSV)", data=plan_csv, file_name=f"Plan_{date.today()}.csv", mime="text/csv")
+                with st.expander(label, expanded=is_today):
+                    c1, c2 = st.columns(2)
+                    c1.write(f"**Lead:** {plan['lead_staff']}")
+                    c2.write(f"**Support:** {plan['support_staff']}")
+                    
+                    st.write(f"**Warm Up:** {plan['warm_up']}")
+                    st.write(f"**Learning Block:** {plan['learning_block']}")
+                    st.write(f"**Regulation Break:** {plan['regulation_break']}")
+                    st.write(f"**Social Play:** {plan['social_play']}")
+                    st.write(f"**Closing Routine:** {plan['closing_routine']}")
+                    st.info(f"**Materials Needed:** {plan['materials_needed']}")
+                    if plan.get('internal_notes'):
+                        st.warning(f"**Internal Notes:** {plan['internal_notes']}")
         else:
-            st.info("No session plan has been created for today yet.")
+            st.info("No session plans found for this date range.")
+    else:
+        st.info("No session plans exist in the system yet.")
     
     st.divider()
 
     # --- SECTION B: ATTENDANCE MANAGEMENT ---
     st.subheader("📋 Attendance Management")
     
-    # ECE/Admin Only Form
     if user_role in ['ece', 'admin']:
         with st.expander("📝 Log Today's Attendance (ECE/Admin Only)"):
             with st.form("att_form"):
@@ -64,7 +84,6 @@ def show_page():
                         st.success(f"Attendance logged for {selected_child}")
                         st.rerun()
 
-    # Staff Attendance Filter
     col_f1, col_f2 = st.columns(2)
     start_att = col_f1.date_input("Attendance From", date.today() - timedelta(days=7))
     end_att = col_f2.date_input("Attendance To", date.today())
@@ -80,7 +99,6 @@ def show_page():
     # --- SECTION C: CLINICAL PROGRESS NOTES ---
     st.subheader("📝 Clinical Progress Notes")
     
-    # Filter for Progress Notes
     col_p1, col_p2 = st.columns(2)
     p_search = col_p1.text_input("Search Child Name")
     p_days = col_p2.number_input("Look back (days)", value=7)
@@ -90,16 +108,14 @@ def show_page():
         df_prog['date'] = pd.to_datetime(df_prog['date']).dt.date
         since_date = date.today() - timedelta(days=p_days)
         
-        # Apply Filters
         df_p_filt = df_prog[df_prog['date'] >= since_date]
         if p_search:
             df_p_filt = df_p_filt[df_p_filt['child_name'].str.contains(p_search, case=False)]
         
-        # Display full notes
         if not df_p_filt.empty:
             for _, row in df_p_filt.sort_values('date', ascending=False).iterrows():
-                with st.expander(f"{row['date']} - {row['child_name']} ({row['discipline']}) - Status: {row['status']}"):
-                    st.write(f"**Goal Area:** {row['goal_area']}")
+                with st.expander(f"{row['date']} - {row['child_name']} ({row['discipline']})"):
+                    st.write(f"**Goal Area:** {row['goal_area']} | **Status:** {row['status']}")
                     st.write(f"**Note:** {row['notes']}")
                     st.caption(f"Author: {row.get('author', 'Unknown')}")
         else:
