@@ -1,194 +1,61 @@
 # views/dashboard.py
 import streamlit as st
 import pandas as pd
-from datetime import date, timedelta
-from .database import (
-    get_list_data, get_data, upsert_attendance, 
-    get_attendance_data, delete_attendance
-)
+from .database import get_data, get_attendance_data, get_messages, update_parent_feedback
 
 def show_page():
-    st.title("📊 Program Dashboard")
-    
-    # Retrieve user session info
-    user_role = st.session_state.get('role', '').lower()
-    username = st.session_state.get('username')
+    role = st.session_state.get('role', '').lower()
     child_link = st.session_state.get('child_link')
-
-    # --- 1. PARENT VIEW ---
-    if user_role == 'parent':
-        show_parent_dashboard(child_link)
-        return
-
-    # --- 2. STAFF & ADMIN VIEW ---
     
-    # --- SECTION A: SESSION PLAN EXPLORER ---
-    st.subheader("📅 Session Plan Explorer")
-    df_plans = get_data("session_plans")
+    st.title("📊 Dashboard")
+
+    # --- 1. MESSAGE BOARD (New) ---
+    if role == 'parent' and child_link:
+        msgs = get_messages(child_link)
+        if not msgs.empty:
+            st.info("📢 **New Messages**")
+            for _, msg in msgs.iterrows():
+                icon = "✅" if msg['type'] == 'To-Do List' else "🔔"
+                with st.expander(f"{icon} {msg['type']} - {msg['date']}"):
+                    st.write(msg['content'])
+                    st.caption(f"Sent by: {msg['author']}")
+            st.divider()
+
+    # --- 2. PROGRESS VIEW (Modified) ---
+    # (Filter logic remains same)
+    df = get_data("progress")
+    if role == 'parent' and child_link:
+        df = df[df['child_name'] == child_link]
     
-    if not df_plans.empty:
-        col_s1, col_s2 = st.columns(2)
-        plan_start = col_s1.date_input("Plans From", date.today() - timedelta(days=7), key="st_plan_start")
-        plan_end = col_s2.date_input("Plans To", date.today() + timedelta(days=7), key="st_plan_end")
-        
-        df_plans['date'] = pd.to_datetime(df_plans['date']).dt.date
-        mask = (df_plans['date'] >= plan_start) & (df_plans['date'] <= plan_end)
-        filtered_plans = df_plans.loc[mask].sort_values('date', ascending=False)
-        
-        if not filtered_plans.empty:
-            csv_plans = filtered_plans.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Download Filtered Plans (CSV)",
-                data=csv_plans,
-                file_name=f"Plans_{plan_start}_to_{plan_end}.csv",
-                mime="text/csv",
-                key="dl_staff_plans"
-            )
-
-            for _, plan in filtered_plans.iterrows():
-                is_today = plan['date'] == date.today()
-                label = f"🗓️ {plan['date']} - Lead: {plan['lead_staff']} {'(TODAY)' if is_today else ''}"
-                with st.expander(label, expanded=is_today):
-                    st.write(f"**Lead:** {plan['lead_staff']} | **Support:** {plan['support_staff']}")
-                    st.write(f"**Learning Block:** {plan['learning_block']}")
-                    st.write(f"**Regulation Break:** {plan['regulation_break']}")
-                    st.write(f"**Social Play:** {plan['social_play']}")
-                    st.write(f"**Closing Routine:** {plan['closing_routine']}")
-                    st.info(f"**Materials:** {plan['materials_needed']}")
-                    if plan.get('internal_notes'):
-                        st.warning(f"**Internal Notes:** {plan['internal_notes']}")
-        else:
-            st.info("No plans found for this date range.")
-    
-    st.divider()
-
-    # --- SECTION B: ATTENDANCE MANAGEMENT ---
-    st.subheader("📋 Attendance Management")
-    
-    # Check for ECE/Admin permissions
-    is_privileged = user_role in ['ece', 'admin']
-
-    if is_privileged:
-        col_entry, col_edit = st.columns(2)
-        
-        with col_entry.expander("📝 Log New Attendance", expanded=False):
-            with st.form("staff_att_form"):
-                att_date = st.date_input("Date", date.today())
-                child_df = get_list_data("children")
-                if not child_df.empty:
-                    selected_child = st.selectbox("Select Child", child_df['child_name'].tolist())
-                    status = st.radio("Status", ["Present", "Absent", "Late"], horizontal=True)
-                    if st.form_submit_button("Submit Attendance"):
-                        upsert_attendance(att_date.isoformat(), selected_child, status, username)
-                        st.success(f"Logged {status} for {selected_child}")
-                        st.rerun()
-
-        with col_edit.expander("🛠️ Edit/Delete Records", expanded=False):
-            st.write("Enter the Record ID (from the table below) to modify it.")
-            target_id = st.number_input("Record ID", min_value=1, step=1)
-            new_status = st.selectbox("New Status", ["Present", "Absent", "Late", "Delete Record"])
-            
-            if st.button("Apply Change", type="primary"):
-                df_temp = get_attendance_data()
-                target_row = df_temp[df_temp['id'] == target_id]
+    if not df.empty:
+        st.subheader("Daily Progress Updates")
+        for index, row in df.iterrows():
+            # Card Style
+            with st.container(border=True):
+                c1, c2 = st.columns([3, 1])
+                c1.markdown(f"**{row['discipline']}** - *{row['goal_area']}*")
+                c1.caption(f"Date: {row['date']} | Staff: {row['author']}")
                 
-                if not target_row.empty:
-                    if new_status == "Delete Record":
-                        delete_attendance(target_id)
-                        st.warning(f"Record {target_id} deleted.")
-                    else:
-                        # Re-save with new status
-                        row = target_row.iloc[0]
-                        upsert_attendance(row['date'], row['child_name'], new_status, username)
-                        st.success(f"Record {target_id} updated to {new_status}.")
-                    st.rerun()
-                else:
-                    st.error("ID not found.")
+                # Show Status Color
+                color = "green" if row['status'] == "Mastered" else "orange" if row['status'] == "Progressing" else "grey"
+                c2.markdown(f":{color}[**{row['status']}**]")
 
-    # Staff Attendance Filter/Table
-    st.write("### Attendance History")
-    col_a1, col_a2 = st.columns(2)
-    a_start = col_a1.date_input("From", date.today() - timedelta(days=7), key="st_att_s")
-    a_end = col_a2.date_input("To", date.today(), key="st_att_e")
+                # EXPANDER FOR DETAILS
+                with st.expander("View Details & Feedback"):
+                    # Show Parent Note if exists
+                    if row.get('parent_note'):
+                        st.success(f"**Note for Parents:**\n{row['parent_note']}")
+                    
+                    # Show Clinical Note (If Staff/Admin)
+                    if role != 'parent':
+                        st.markdown(f"**Clinical Note:** {row['notes']}")
 
-    df_att = get_attendance_data()
-    if not df_att.empty:
-        df_att['date'] = pd.to_datetime(df_att['date']).dt.date
-        df_att_f = df_att[(df_att['date'] >= a_start) & (df_att['date'] <= a_end)]
-        # We show the ID column here so staff can see which ID to type into the Edit box
-        st.dataframe(df_att_f.sort_values('date', ascending=False), use_container_width=True, hide_index=True)
-    
-    st.divider()
-
-    # --- SECTION C: CLINICAL PROGRESS NOTES ---
-    st.subheader("📝 Clinical Progress Notes")
-    col_p1, col_p2 = st.columns(2)
-    p_search = col_p1.text_input("Search Child Name", key="st_p_search")
-    p_days = col_p2.number_input("Look back (days)", value=30, key="st_p_days")
-    
-    df_prog = get_data("progress")
-    if not df_prog.empty:
-        df_prog['date'] = pd.to_datetime(df_prog['date']).dt.date
-        since = date.today() - timedelta(days=p_days)
-        df_p_filt = df_prog[df_prog['date'] >= since].copy()
-        
-        if p_search:
-            df_p_filt = df_p_filt[df_p_filt['child_name'].str.contains(p_search, case=False)]
-        
-        if not df_p_filt.empty:
-            csv_prog = df_p_filt.sort_values('date', ascending=False).to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Download Filtered Progress (CSV)", data=csv_prog, file_name="Progress_Report.csv", key="dl_st_prog")
-            
-            for _, row in df_p_filt.sort_values('date', ascending=False).iterrows():
-                with st.expander(f"{row['date']} - {row['child_name']} ({row['discipline']})"):
-                    st.write(f"**Goal Area:** {row['goal_area']} | **Status:** {row['status']}")
-                    st.write(f"**Note:** {row['notes']}")
-                    st.caption(f"Author: {row.get('author', 'Unknown')}")
-    else:
-        st.info("No progress notes found.")
-
-# --- PARENT DASHBOARD FUNCTION ---
-def show_parent_dashboard(child_link):
-    st.subheader(f"👋 Welcome! Records for: {child_link}")
-    
-    if not child_link or child_link in ["None", "All"]:
-        st.error("⚠️ Account not linked to a child. Contact Admin.")
-        return
-
-    tab_att, tab_prog = st.tabs(["📊 Attendance History", "📝 Progress Updates"])
-
-    with tab_att:
-        c1, c2 = st.columns(2)
-        start_d = c1.date_input("From", date.today() - timedelta(days=30), key="p_att_s")
-        end_d = c2.date_input("To", date.today(), key="p_att_e")
-
-        df_att = get_attendance_data(child_name=child_link)
-        if not df_att.empty:
-            df_att['date'] = pd.to_datetime(df_att['date']).dt.date
-            df_f = df_att[(df_att['date'] >= start_d) & (df_att['date'] <= end_d)]
-            if not df_f.empty:
-                m1, m2 = st.columns(2)
-                m1.metric("Present", len(df_f[df_f['status'] == 'Present']))
-                m2.metric("Absent", len(df_f[df_f['status'] == 'Absent']))
-                st.dataframe(df_f[['date', 'status']].sort_values('date', ascending=False), use_container_width=True, hide_index=True)
-            else:
-                st.info("No records in this range.")
-
-    with tab_prog:
-        df_prog = get_data("progress")
-        if not df_prog.empty:
-            df_p_filt = df_prog[df_prog['child_name'] == child_link].copy()
-            df_p_filt['date'] = pd.to_datetime(df_p_filt['date']).dt.date
-            
-            if not df_p_filt.empty:
-                lookback = st.slider("Days to show:", 7, 90, 30)
-                cutoff = date.today() - timedelta(days=lookback)
-                df_disp = df_p_filt[df_p_filt['date'] >= cutoff].sort_values('date', ascending=False)
-
-                for _, row in df_disp.iterrows():
-                    with st.container(border=True):
-                        st.write(f"📅 **Date:** {row['date']} | 🎯 **Area:** {row['goal_area']}")
-                        st.write(f"🔍 **Observation:** {row['notes']}")
-                        st.caption(f"Logged by: {row['discipline']}")
-            else:
-                st.info("No progress updates shared yet.")
+                    # --- PARENT FEEDBACK SECTION ---
+                    current_fb = row.get('parent_feedback', '')
+                    if role == 'parent':
+                        fb_input = st.text_area("Your Feedback/Question:", value=current_fb if current_fb else "", key=f"fb_{row['id']}")
+                        if st.button("Send Feedback", key=f"btn_{row['id']}"):
+                            update_parent_feedback(row['id'], fb_input)
+                            st.success("Feedback sent to staff!")
+                    elif current_fb:
+                        st.info(f"**Parent Feedback:** {current_fb}")
